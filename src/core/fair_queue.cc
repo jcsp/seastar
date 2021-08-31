@@ -77,6 +77,10 @@ bool fair_queue_ticket::operator==(const fair_queue_ticket& o) const noexcept {
     return _weight == o._weight && _size == o._size;
 }
 
+bool fair_queue_ticket::operator<(const fair_queue_ticket &rhs) const noexcept {
+    return _weight < rhs._weight || _size < rhs._size;
+}
+
 std::ostream& operator<<(std::ostream& os, fair_queue_ticket t) {
     return os << t._weight << ":" << t._size;
 }
@@ -108,6 +112,7 @@ std::ostream& operator<<(std::ostream& os, fair_group_rover r) {
 fair_group::fair_group(config cfg) noexcept
         : _capacity_tail(fair_group_rover(0, 0))
         , _capacity_head(fair_group_rover(cfg.max_req_count, cfg.max_bytes_count))
+        , _capacity_free(fair_queue_ticket(cfg.max_req_count, cfg.max_bytes_count))
         , _maximum_capacity(cfg.max_req_count, cfg.max_bytes_count)
 {
     assert(!_capacity_tail.load(std::memory_order_relaxed)
@@ -118,12 +123,20 @@ fair_group::fair_group(config cfg) noexcept
 fair_group_rover fair_group::grab_capacity(fair_queue_ticket cap) noexcept {
     fair_group_rover cur = _capacity_tail.load(std::memory_order_relaxed);
     while (!_capacity_tail.compare_exchange_weak(cur, cur + cap)) ;
+
+    fair_queue_ticket t = _capacity_free.load(std::memory_order_relaxed);
+    while (!_capacity_free.compare_exchange_weak(t, t - cap));
+
     return cur;
 }
 
 void fair_group::release_capacity(fair_queue_ticket cap) noexcept {
     fair_group_rover cur = _capacity_head.load(std::memory_order_relaxed);
     while (!_capacity_head.compare_exchange_weak(cur, cur + cap)) ;
+
+    fair_queue_ticket t = _capacity_free.load(std::memory_order_relaxed);
+    while (!_capacity_free.compare_exchange_weak(t, t + cap));
+
 }
 
 fair_queue::fair_queue(fair_group& group, config cfg)
@@ -171,25 +184,19 @@ std::chrono::microseconds fair_queue_ticket::duration_at_pace(float weight_pace,
 }
 
 bool fair_queue::grab_pending_capacity(fair_queue_ticket cap) noexcept {
-    fair_group_rover pending_head = _pending->orig_tail + cap;
-    if (pending_head.maybe_ahead_of(_group.head())) {
+    auto available = _group.available_capacity();
+    if (available < cap) {
         return false;
     }
 
     if (cap == _pending->cap) {
         _pending.reset();
+        return true;
     } else {
-        /*
-         * This branch is called when the fair queue decides to
-         * submit not the same request that entered it into the
-         * pending state and this new request crawls through the
-         * expected head value.
-         */
-        _group.grab_capacity(cap);
-        _pending->orig_tail += cap;
+        _group.release_capacity(_pending->cap);
+        _pending.reset();
+        return grab_capacity(cap);
     }
-
-    return true;
 }
 
 bool fair_queue::grab_capacity(fair_queue_ticket cap) noexcept {

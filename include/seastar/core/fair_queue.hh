@@ -65,6 +65,8 @@ public:
     /// Checks if the tickets fully equals to another one
     /// \param desc another \ref fair_queue_ticket to compare with
     bool operator==(const fair_queue_ticket& desc) const noexcept;
+    /// Checks if the `rhs` ticket exceeds this ticket's weight or size
+    bool operator<(const fair_queue_ticket &rhs) const noexcept;
 
     std::chrono::microseconds duration_at_pace(float weight_pace, float size_pace) const noexcept;
 
@@ -179,6 +181,7 @@ class fair_group {
 
     fair_group_atomic_rover _capacity_tail;
     fair_group_atomic_rover _capacity_head;
+    std::atomic<fair_queue_ticket> _capacity_free;
     fair_queue_ticket _maximum_capacity;
 
 public:
@@ -197,6 +200,7 @@ public:
     explicit fair_group(config cfg) noexcept;
 
     fair_queue_ticket maximum_capacity() const noexcept { return _maximum_capacity; }
+    fair_queue_ticket available_capacity() const noexcept { return _capacity_free.load(std::memory_order_relaxed); }
     fair_group_rover grab_capacity(fair_queue_ticket cap) noexcept;
     void release_capacity(fair_queue_ticket cap) noexcept;
 
