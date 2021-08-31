@@ -203,6 +203,10 @@ public:
     fair_group_rover head() const noexcept {
         return _capacity_head.load(std::memory_order_relaxed);
     }
+
+    fair_group_rover tail() const noexcept {
+        return _capacity_tail.load(std::memory_order_relaxed);
+    }
 };
 
 /// \brief Fair queuing class
