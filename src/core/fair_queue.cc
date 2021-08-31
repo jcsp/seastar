@@ -121,12 +121,20 @@ fair_group::fair_group(config cfg) noexcept
 fair_group_rover fair_group::grab_capacity(fair_queue_ticket cap) noexcept {
     fair_group_rover cur = _capacity_tail.load(std::memory_order_relaxed);
     while (!_capacity_tail.compare_exchange_weak(cur, cur + cap)) ;
+
+    seastar_logger.trace("grab_capacity: tail={} (was {})",
+                         cur + cap, cur);
+
     return cur;
 }
 
 void fair_group::release_capacity(fair_queue_ticket cap) noexcept {
     fair_group_rover cur = _capacity_head.load(std::memory_order_relaxed);
     while (!_capacity_head.compare_exchange_weak(cur, cur + cap)) ;
+
+    seastar_logger.trace("release_capacity: head={} (was {}) cap={}",
+                         cur + cap, cur, cap);
+
 }
 
 fair_queue::fair_queue(fair_group& group, config cfg)
@@ -197,11 +205,15 @@ bool fair_queue::grab_pending_capacity(fair_queue_ticket cap) noexcept {
 
 bool fair_queue::grab_capacity(fair_queue_ticket cap) noexcept {
     if (_pending) {
+        seastar_logger.trace("grab_capacity _pending tail={} cap={}", _pending.value().orig_tail, _pending.value().cap);
         return grab_pending_capacity(cap);
     }
 
     fair_group_rover orig_tail = _group.grab_capacity(cap);
-    if ((orig_tail + cap).maybe_ahead_of(_group.head())) {
+    auto projected = (orig_tail + cap);
+    auto head = _group.head();
+    if (projected.maybe_ahead_of(head)) {
+        seastar_logger.trace("grab_capacity: overshot, projected={} head={} cap={}", projected, head, cap);
         _pending.emplace(orig_tail, cap);
         return false;
     }
@@ -271,6 +283,8 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
 
         auto& req = h->_queue.front();
         if (!grab_capacity(req._ticket)) {
+            seastar_logger.trace("dispatch_requests: no capacity for {}.  head={} tail={} _requests_executing={} _requests_queued={}",
+                req._ticket, _group.head(), _group.tail(), _requests_executing, _requests_queued);
             break;
         }
 
