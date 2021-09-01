@@ -86,9 +86,31 @@ fair_group_rover::fair_group_rover(uint32_t weight, uint32_t size) noexcept
         , _size(size)
 {}
 
+static inline uint32_t wrap_delta(uint32_t a, uint32_t b) {
+    constexpr uint32_t delta_limit = 0x7fffffff;
+
+    // Account for wrapping by assuming that neither pointer may  be more than 2**31 ahead
+    // of the other. Head shouldn't get this far ahead of tail because it is bounded
+    // by maximum_capacity.  Tail shouldn't get this far ahead of head because it is
+    // bounded by the IO size multiplied by the number of queues with _pending set.
+    if (a > b) {
+        const uint32_t delta = a - b;
+        if ( delta < delta_limit) {
+            return delta;
+        } else  {
+            return 0;
+        }
+    } else {
+        // Despite being 'behind' them, we might be logically ahead due to wrapping.  But
+        // it doesn't matter,  because if we get it wrong we just proceed with IOs earlier
+        // than we otherwise might.
+        return 0;
+    }
+}
+
 fair_queue_ticket fair_group_rover::maybe_ahead_of(const fair_group_rover& other) const noexcept {
-    return fair_queue_ticket(std::max<int32_t>(_weight - other._weight, 0),
-            std::max<int32_t>(_size - other._size, 0));
+    return fair_queue_ticket(wrap_delta(_weight, other._weight),
+            wrap_delta(_size, other._size));
 }
 
 fair_group_rover fair_group_rover::operator+(fair_queue_ticket t) const noexcept {
