@@ -126,6 +126,50 @@ void fair_group::release_capacity(fair_queue_ticket cap) noexcept {
     while (!_capacity_head.compare_exchange_weak(cur, cur + cap)) ;
 }
 
+/**
+ * Where head is expected to be ahead of tail
+ */
+static inline int32_t wrap_distance(uint32_t tail, uint32_t head) noexcept {
+    constexpr uint32_t cutoff = 0x7fffffff;
+    if (head > tail) {
+        uint32_t delta = head - tail;
+        if (delta < cutoff) {
+            return delta;
+        } else  {
+            return -(0xffffffff - delta);
+        }
+    } else if (tail > head) {
+        uint32_t delta = tail - head;
+        if (delta < cutoff) {
+            return -delta;
+        } else  {
+            return (0xffffffff - delta);
+        }
+    } else {
+        return 0;
+    }
+}
+
+/**
+ * True if the tail pointer is equal to or less than the head pointer.
+ *
+ * Indicates that a fair_queue::_pending IO may proceed *even if*
+ * its primary check of _pending.orig_tail <= head fails (which may
+ * happen due to wrapping).
+ */
+bool fair_group::available() const noexcept {
+    // Head and tail are wrapping counters, but there are bounds on how far ahead they
+    // can be of one another in the non-wrapped space:
+    //  - tail can only exceed head by the maximum IO size times the number of queues
+    //  - head can only exceed tail by maximum_capacity()
+
+    // If our maximum capacity is 1, and a _pending has already advanced tail, then
+    // we become ready to service it when available capacity is zero.
+    auto head = _capacity_head.load(std::memory_order_relaxed);
+    auto tail = _capacity_tail.load(std::memory_order_relaxed);
+    return wrap_distance(tail._weight, head._weight) > 0 && wrap_distance(tail._size, head._size) > 0;
+}
+
 fair_queue::fair_queue(fair_group& group, config cfg)
     : _config(std::move(cfg))
     , _group(group)
@@ -172,7 +216,7 @@ std::chrono::microseconds fair_queue_ticket::duration_at_pace(float weight_pace,
 
 bool fair_queue::grab_pending_capacity(fair_queue_ticket cap) noexcept {
     fair_group_rover pending_head = _pending->orig_tail + cap;
-    if (pending_head.maybe_ahead_of(_group.head())) {
+    if (pending_head.maybe_ahead_of(_group.head()) && !_group.available()) {
         return false;
     }
 

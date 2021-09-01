@@ -108,6 +108,8 @@ public:
     fair_group_rover& operator+=(fair_queue_ticket t) noexcept;
 
     friend std::ostream& operator<<(std::ostream& os, fair_group_rover r);
+
+    friend class fair_group;
 };
 
 /// \addtogroup io-module
@@ -203,6 +205,8 @@ public:
     fair_group_rover head() const noexcept {
         return _capacity_head.load(std::memory_order_relaxed);
     }
+
+    bool available() const noexcept;
 };
 
 /// \brief Fair queuing class
