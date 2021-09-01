@@ -118,12 +118,24 @@ fair_group::fair_group(config cfg) noexcept
 fair_group_rover fair_group::grab_capacity(fair_queue_ticket cap) noexcept {
     fair_group_rover cur = _capacity_tail.load(std::memory_order_relaxed);
     while (!_capacity_tail.compare_exchange_weak(cur, cur + cap)) ;
+    if (cur._weight + cap._weight < cur._weight) {
+        seastar_logger.debug("grab_capacity: tail weight wrap {} -> {}", cur, cur + cap);
+    }
+    if (cur._size + cap._size < cur._size) {
+        seastar_logger.debug("grab_capacity: tail size wrap {} -> {}", cur, cur + cap);
+    }
     return cur;
 }
 
 void fair_group::release_capacity(fair_queue_ticket cap) noexcept {
     fair_group_rover cur = _capacity_head.load(std::memory_order_relaxed);
     while (!_capacity_head.compare_exchange_weak(cur, cur + cap)) ;
+    if (cur._weight + cap._weight < cur._weight) {
+        seastar_logger.debug("release_capacity: head weight wrap {} -> {}", cur, cur + cap);
+    }
+    if (cur._size + cap._size < cur._size) {
+        seastar_logger.debug("release_capacity: head size wrap {} -> {}", cur, cur + cap);
+    }
 }
 
 fair_queue::fair_queue(fair_group& group, config cfg)
@@ -172,7 +184,9 @@ std::chrono::microseconds fair_queue_ticket::duration_at_pace(float weight_pace,
 
 bool fair_queue::grab_pending_capacity(fair_queue_ticket cap) noexcept {
     fair_group_rover pending_head = _pending->orig_tail + cap;
-    if (pending_head.maybe_ahead_of(_group.head())) {
+    auto head = _group.head();
+    if (pending_head.maybe_ahead_of(head)) {
+        seastar_logger.debug("grab_pending_capacity waiting: {} ahead of {}", pending_head, head);
         return false;
     }
 
@@ -185,6 +199,7 @@ bool fair_queue::grab_pending_capacity(fair_queue_ticket cap) noexcept {
          * pending state and this new request crawls through the
          * expected head value.
          */
+        seastar_logger.debug("grab_pending_capacity request switch from {} to {}", _pending.value().cap, cap);
         _group.grab_capacity(cap);
         _pending->orig_tail += cap;
     }
@@ -199,6 +214,7 @@ bool fair_queue::grab_capacity(fair_queue_ticket cap) noexcept {
 
     fair_group_rover orig_tail = _group.grab_capacity(cap);
     if ((orig_tail + cap).maybe_ahead_of(_group.head())) {
+        seastar_logger.debug("grab_capacity: stashing _pending {} {}", orig_tail, cap);
         _pending.emplace(orig_tail, cap);
         return false;
     }

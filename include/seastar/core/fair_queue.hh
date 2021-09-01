@@ -90,13 +90,15 @@ public:
     /// It is however not legal for the axis to have any quantity set to zero.
     /// \param axis another \ref fair_queue_ticket to be used as a a base vector against which to normalize this fair_queue_ticket.
     float normalize(fair_queue_ticket axis) const noexcept;
+
+    friend class fair_group;
 };
 
 class fair_group_rover {
+public:
     uint32_t _weight = 0;
     uint32_t _size = 0;
 
-public:
     fair_group_rover(uint32_t weight, uint32_t size) noexcept;
 
     /*
@@ -108,6 +110,8 @@ public:
     fair_group_rover& operator+=(fair_queue_ticket t) noexcept;
 
     friend std::ostream& operator<<(std::ostream& os, fair_group_rover r);
+
+    friend class fair_group;
 };
 
 /// \addtogroup io-module
