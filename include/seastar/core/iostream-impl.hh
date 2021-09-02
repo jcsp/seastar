@@ -81,6 +81,7 @@ template<typename CharType>
 future<>
 output_stream<CharType>::zero_copy_put(net::packet p) noexcept {
     // if flush is scheduled, disable it, so it will not try to write in parallel
+    seastar_logger.trace("output_stream: {} zero_copy_put: {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
     _flush = false;
     if (_flushing) {
         // flush in progress, wait for it to end before continuing
@@ -470,8 +471,10 @@ output_stream<CharType>::poll_flush() noexcept {
     if (!_flush) {
         // flush was canceled, do nothing
         _flushing = false;
-        _in_batch.value().set_value();
-        _in_batch = std::nullopt;
+        if (_in_batch.has_value()) {
+            _in_batch.value().set_value();
+            _in_batch = std::nullopt;
+        }
         return;
     }
 
@@ -492,7 +495,7 @@ output_stream<CharType>::poll_flush() noexcept {
         (void)f.then([this] {
             return _fd.flush().then([this](){
                 seastar_logger.trace("output_stream: {} poll_flush sleep {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
-                return seastar::sleep(1000us);
+                return seastar::sleep(1us);
             });
     }).then_wrapped([this] (future<> f) {
         try {
