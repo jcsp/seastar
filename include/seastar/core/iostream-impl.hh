@@ -24,9 +24,12 @@
 #pragma once
 
 #include <seastar/core/do_with.hh>
+#include <seastar/core/sleep.hh>
 #include <seastar/core/loop.hh>
 #include <seastar/net/packet.hh>
 #include <seastar/util/variant_utils.hh>
+
+using namespace std::chrono_literals;
 
 namespace seastar {
 
@@ -455,6 +458,7 @@ output_stream<CharType>::put(temporary_buffer<CharType> buf) noexcept {
     }
 }
 
+
 template <typename CharType>
 void
 output_stream<CharType>::poll_flush() noexcept {
@@ -480,8 +484,8 @@ output_stream<CharType>::poll_flush() noexcept {
     }
 
     // FIXME: future is discarded
-    (void)f.then([this] {
-        return _fd.flush();
+        (void)f.then([this] {
+            return _fd.flush().then([](){return seastar::sleep(1000us);});
     }).then_wrapped([this] (future<> f) {
         try {
             f.get();
