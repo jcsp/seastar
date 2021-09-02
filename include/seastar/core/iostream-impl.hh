@@ -498,7 +498,7 @@ output_stream<CharType>::poll_flush() noexcept {
         (void)f.then([this] {
             return _fd.flush().then([this](){
                 seastar_logger.trace("output_stream: {} poll_flush sleep {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
-                return seastar::sleep(1000us);
+                return seastar::sleep(10000us);
             });
     }).then_wrapped([this] (future<> f) {
         try {
@@ -539,6 +539,10 @@ output_stream<CharType>::~output_stream() {
                          _flush, _flushing, _in_batch.has_value());
     assert(!_flushing);
     assert(!_in_batch.has_value());
+    if (_in_batch.has_value()) {
+        seastar_logger.error("output_stream: 'assertion'");
+        abort();
+    }
 }
 
 template <typename CharType>
