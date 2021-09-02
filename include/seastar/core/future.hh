@@ -631,6 +631,10 @@ struct future_state :  public future_state_base, private internal::uninitialized
     }
     template <typename... A>
     void set(A&&... a) noexcept {
+        assert(_u.st != state::invalid);
+        assert(_u.st != state::result_unavailable);
+        assert(_u.st != state::result);
+        assert(_u.st != state::exception_min);
         assert(_u.st == state::future);
         new (this) future_state(ready_future_marker(), std::forward<A>(a)...);
     }

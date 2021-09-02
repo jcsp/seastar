@@ -435,9 +435,9 @@ output_stream<CharType>::flush() noexcept {
         } else {
             _flush = true;
             if (!_in_batch) {
-                seastar_logger.trace("output_stream: flush add to poller: {} {} {}", _flush, _flushing, _in_batch.has_value());
-                add_to_flush_poller(this);
                 _in_batch = promise<>();
+                seastar_logger.trace("output_stream: {} flush add to poller: {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
+                add_to_flush_poller(this);
             }
         }
     }
