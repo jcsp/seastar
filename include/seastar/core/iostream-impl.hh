@@ -28,10 +28,11 @@
 #include <seastar/core/loop.hh>
 #include <seastar/net/packet.hh>
 #include <seastar/util/variant_utils.hh>
+#include <seastar/util/log.hh>
 
 using namespace std::chrono_literals;
-
 namespace seastar {
+    extern seastar::logger seastar_logger;
 
 inline future<temporary_buffer<char>> data_source_impl::skip(uint64_t n)
 {
@@ -414,6 +415,7 @@ output_stream<CharType>::slow_write(const char_type* buf, size_t n) noexcept {
 template <typename CharType>
 future<>
 output_stream<CharType>::flush() noexcept {
+    seastar_logger.trace("output_stream: {} flush: {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
     if (!_batch_flushes) {
         if (_end) {
             _buf.trim(_end);
@@ -433,6 +435,7 @@ output_stream<CharType>::flush() noexcept {
         } else {
             _flush = true;
             if (!_in_batch) {
+                seastar_logger.trace("output_stream: flush add to poller: {} {} {}", _flush, _flushing, _in_batch.has_value());
                 add_to_flush_poller(this);
                 _in_batch = promise<>();
             }
@@ -446,6 +449,7 @@ void add_to_flush_poller(output_stream<char>* x);
 template <typename CharType>
 future<>
 output_stream<CharType>::put(temporary_buffer<CharType> buf) noexcept {
+    seastar_logger.trace("output_stream: {} put {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
     // if flush is scheduled, disable it, so it will not try to write in parallel
     _flush = false;
     if (_flushing) {
@@ -462,6 +466,7 @@ output_stream<CharType>::put(temporary_buffer<CharType> buf) noexcept {
 template <typename CharType>
 void
 output_stream<CharType>::poll_flush() noexcept {
+    seastar_logger.trace("output_stream: {} poll_flush enter {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
     if (!_flush) {
         // flush was canceled, do nothing
         _flushing = false;
@@ -485,7 +490,10 @@ output_stream<CharType>::poll_flush() noexcept {
 
     // FIXME: future is discarded
         (void)f.then([this] {
-            return _fd.flush().then([](){return seastar::sleep(1000us);});
+            return _fd.flush().then([this](){
+                seastar_logger.trace("output_stream: {} poll_flush sleep {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
+                return seastar::sleep(1000us);
+            });
     }).then_wrapped([this] (future<> f) {
         try {
             f.get();
@@ -493,6 +501,7 @@ output_stream<CharType>::poll_flush() noexcept {
             _ex = std::current_exception();
         }
         // if flush() was called while flushing flush once more
+        seastar_logger.trace("output_stream: {} poll_flush re-enter {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
         poll_flush();
     });
 }
@@ -500,6 +509,7 @@ output_stream<CharType>::poll_flush() noexcept {
 template <typename CharType>
 future<>
 output_stream<CharType>::close() noexcept {
+    seastar_logger.trace("poll_flush: {} close", fmt::ptr(this));
     return flush().finally([this] {
         if (_in_batch) {
             return _in_batch.value().get_future();
