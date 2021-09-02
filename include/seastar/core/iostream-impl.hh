@@ -492,7 +492,7 @@ output_stream<CharType>::poll_flush() noexcept {
     } else if(_zc_bufs) {
         f = _fd.put(std::move(_zc_bufs));
     }
-    seastar_logger.trace("output_stream: {} poll_flush no data, immediate");
+    seastar_logger.trace("output_stream: {} poll_flush no data, immediate", fmt::ptr(this));
 
     // FIXME: future is discarded
         (void)f.then([this] {
