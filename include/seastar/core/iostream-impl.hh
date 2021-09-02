@@ -467,13 +467,15 @@ output_stream<CharType>::put(temporary_buffer<CharType> buf) noexcept {
 template <typename CharType>
 void
 output_stream<CharType>::poll_flush() noexcept {
-    seastar_logger.trace("output_stream: {} poll_flush enter {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
+    seastar_logger.trace("output_stream: {} poll_flush x enter {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
     if (!_flush) {
         // flush was canceled, do nothing
         _flushing = false;
         if (_in_batch.has_value()) {
             _in_batch.value().set_value();
             _in_batch = std::nullopt;
+        } else {
+            seastar_logger.error("output_stream: {} poll_flush no _in_batch x {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
         }
         return;
     }
@@ -490,12 +492,13 @@ output_stream<CharType>::poll_flush() noexcept {
     } else if(_zc_bufs) {
         f = _fd.put(std::move(_zc_bufs));
     }
+    seastar_logger.trace("output_stream: {} poll_flush no data, immediate");
 
     // FIXME: future is discarded
         (void)f.then([this] {
             return _fd.flush().then([this](){
                 seastar_logger.trace("output_stream: {} poll_flush sleep {} {} {}", fmt::ptr(this), _flush, _flushing, _in_batch.has_value());
-                return seastar::sleep(1us);
+                return seastar::sleep(1000us);
             });
     }).then_wrapped([this] (future<> f) {
         try {
@@ -512,7 +515,7 @@ output_stream<CharType>::poll_flush() noexcept {
 template <typename CharType>
 future<>
 output_stream<CharType>::close() noexcept {
-    seastar_logger.trace("poll_flush: {} close", fmt::ptr(this));
+    seastar_logger.trace("output_stream: {} close", fmt::ptr(this));
     return flush().finally([this] {
         if (_in_batch) {
             return _in_batch.value().get_future();
@@ -529,13 +532,21 @@ output_stream<CharType>::close() noexcept {
     });
 }
 
+
+    template <typename CharType>
+output_stream<CharType>::~output_stream() {
+    seastar_logger.trace("output_stream: {} destroy {} {} {}", fmt::ptr(this),
+                         _flush, _flushing, _in_batch.has_value());
+    assert(!_flushing);
+    assert(!_in_batch.has_value());
+}
+
 template <typename CharType>
 data_sink
 output_stream<CharType>::detach() && {
     if (_buf) {
         throw std::logic_error("detach() called on a used output_stream");
     }
-
     return std::move(_fd);
 }
 
