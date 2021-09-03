@@ -517,7 +517,9 @@ future<>
 output_stream<CharType>::close() noexcept {
     seastar_logger.trace("output_stream: {} close", fmt::ptr(this));
     return flush().finally([this] {
+        seastar_logger.trace("output_stream: {} close flushed", fmt::ptr(this));
         if (_in_batch) {
+            seastar_logger.trace("output_stream: {} close return fut", fmt::ptr(this));
             return _in_batch.value().get_future();
         } else {
             return make_ready_future();
