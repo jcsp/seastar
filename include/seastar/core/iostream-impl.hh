@@ -347,10 +347,12 @@ template <typename CharType>
 future<>
 output_stream<CharType>::write(const char_type* buf, size_t n) noexcept {
     if (__builtin_expect(!_buf || n > _size - _end, false)) {
+        std::cerr << fmt::format("::write {} slow path n={}\n", fmt::ptr(&_fd), n);
         return slow_write(buf, n);
     }
     std::copy_n(buf, n, _buf.get_write() + _end);
     _end += n;
+    std::cerr << fmt::format("::write {} buffer n={} _end={}\n", fmt::ptr(&_fd), n, _end);
     return make_ready_future<>();
 }
 
@@ -369,6 +371,7 @@ output_stream<CharType>::slow_write(const char_type* buf, size_t n) noexcept {
             std::copy(buf + now, buf + n, tmp.get_write());
             _buf.trim(_end);
             _end = 0;
+            std::cerr << fmt::format("::slow_write {} _end=0,put\n", fmt::ptr(&_fd), _end);
             return put(std::move(_buf)).then([this, tmp = std::move(tmp)]() mutable {
                 if (_trim_to_size) {
                     return split_and_put(std::move(tmp));
@@ -413,16 +416,19 @@ void add_to_flush_poller(output_stream<char>& x) noexcept;
 template <typename CharType>
 future<> output_stream<CharType>::do_flush() noexcept {
     if (_end) {
+        std::cerr << fmt::format("do_flush {} end\n", fmt::ptr(&_fd));
         _buf.trim(_end);
         _end = 0;
         return _fd.put(std::move(_buf)).then([this] {
             return _fd.flush();
         });
     } else if (_zc_bufs) {
+        std::cerr << fmt::format("do_flush {} zc_bufs\n", fmt::ptr(&_fd));
         return _fd.put(std::move(_zc_bufs)).then([this] {
             return _fd.flush();
         });
     } else {
+        std::cerr << fmt::format("do_flush {} nothing buffered\n", fmt::ptr(&_fd));
         return make_ready_future<>();
     }
 }
@@ -431,12 +437,15 @@ template <typename CharType>
 future<>
 output_stream<CharType>::flush() noexcept {
     if (!_batch_flushes) {
+        std::cerr << fmt::format("output_stream::flush {} immediate\n", fmt::ptr(&_fd));
         return do_flush();
     } else {
         if (_ex) {
             // flush is a good time to deliver outstanding errors
+            std::cerr << fmt::format("output_stream::flush {} exceptional\n", fmt::ptr(&_fd));
             return make_exception_future<>(std::move(_ex));
         } else {
+            std::cerr << fmt::format("output_stream::flush {} async {}\n", fmt::ptr(&_fd), _in_batch.has_value());
             _flush = true;
             if (!_in_batch) {
                 add_to_flush_poller(*this);
@@ -450,6 +459,7 @@ output_stream<CharType>::flush() noexcept {
 template <typename CharType>
 future<>
 output_stream<CharType>::put(temporary_buffer<CharType> buf) noexcept {
+    std::cerr << fmt::format("output_stream::put {}\n", fmt::ptr(&_fd));
     // if flush is scheduled, disable it, so it will not try to write in parallel
     _flush = false;
     if (_flushing) {

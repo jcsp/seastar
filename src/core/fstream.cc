@@ -355,12 +355,26 @@ class file_data_sink_impl : public data_sink_impl {
     semaphore _write_behind_sem = { _options.write_behind };
     future<> _background_writes_done = make_ready_future<>();
     bool _failed = false;
+    uint32_t _writes_entered{0};
+    uint32_t _writes_begun{0};
+    uint32_t _writes_failed{0};
+    uint32_t _writes_complete{0};
+    uint32_t _writes_flushed{0};
 public:
     file_data_sink_impl(file f, file_output_stream_options options)
             : _file(std::move(f)), _options(options) {
         _options.buffer_size = select_buffer_size<unsigned>(_options.buffer_size, _file.disk_write_max_length());
         _write_behind_sem.ensure_space_for_waiters(1); // So that wait() doesn't throw
     }
+
+    ~file_data_sink_impl() {
+        auto ok = _write_behind_sem.available_units() == _options.write_behind;
+        if (!ok) {
+            std::cerr << fmt::format("~file_data_sink_impl {} {} {} {} {} {} {} {}\n", fmt::ptr(this), _write_behind_sem.available_units(), _options.write_behind, _writes_entered, _writes_begun, _writes_failed, _writes_complete, _writes_flushed);
+        }
+        assert(ok);
+    }
+
     future<> put(net::packet data) override { abort(); }
     virtual temporary_buffer<char> allocate_buffer(size_t size) override {
         return temporary_buffer<char>::aligned(_file.memory_dma_alignment(), size);
@@ -377,14 +391,18 @@ public:
         // 1. Issue N writes in parallel, using a semaphore to limit to N
         // 2. Collect results in _background_writes_done, merging exception futures
         // 3. If we've already seen a failure, don't issue more writes.
+        _writes_entered += 1;
         return _write_behind_sem.wait().then([this, pos, buf = std::move(buf)] () mutable {
+            _writes_begun += 1;
             if (_failed) {
+                _writes_failed += 1;
                 _write_behind_sem.signal();
                 auto ret = std::move(_background_writes_done);
                 _background_writes_done = make_ready_future<>();
                 return ret;
             }
             auto this_write_done = do_put(pos, std::move(buf)).finally([this] {
+                _writes_complete += 1;
                 _write_behind_sem.signal();
             });
             _background_writes_done = when_all(std::move(_background_writes_done), std::move(this_write_done))
@@ -407,6 +425,7 @@ public:
     }
 private:
     future<> do_put(uint64_t pos, temporary_buffer<char> buf) noexcept {
+      std::cerr << fmt::format("do_put {}\n", fmt::ptr(this));
       try {
         // put() must usually be of chunks multiple of file::dma_alignment.
         // Only the last part can have an unaligned length. If put() was
@@ -452,9 +471,13 @@ private:
     future<> wait() noexcept {
         // restore to pristine state; for flush() + close() sequence
         // (we allow either flush, or close, or both)
+        std::cerr << fmt::format("wait() {} enter {}/{}\n",fmt::ptr(this),  _write_behind_sem.available_units(), _options.write_behind) << std::endl;
         return _write_behind_sem.wait(_options.write_behind).then([this] {
+            std::cerr << fmt::format("wait() {} done {}/{}\n",fmt::ptr(this),  _write_behind_sem.available_units(), _options.write_behind) << std::endl;
             return std::exchange(_background_writes_done, make_ready_future<>());
         }).finally([this] {
+            std::cerr << fmt::format("wait() {} flushed {}/{}\n", fmt::ptr(this), _write_behind_sem.available_units(), _options.write_behind) << std::endl;
+            _writes_flushed += 1;
             _write_behind_sem.signal(_options.write_behind);
         });
     }
